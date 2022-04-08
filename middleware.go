@@ -46,19 +46,23 @@ type IdempotencyConfig struct {
 	KeyLookup string `yaml:"key_lookup"`
 
 	KeyLookupFunc KeyExtractor
+
+	TTL time.Duration
 }
 
 var DefaultIdempotencyConfig = IdempotencyConfig{
 	Skipper:   middleware.DefaultSkipper,
 	Methods:   []string{http.MethodPost},
 	KeyLookup: "header:X-Idempotency-Key",
+	TTL:       24 * time.Hour,
 }
 
 func Idempotency() echo.MiddlewareFunc {
 	return IdempotencyWithConfig(DefaultIdempotencyConfig)
 }
 
-type reqRecord struct {
+// ReqRecord ...
+type ReqRecord struct {
 	Done            bool                `json:"done"`
 	ResponseCode    int                 `json:"response_code"`
 	ResponseHeaders map[string][]string `json:"response_headers"`
@@ -100,6 +104,10 @@ func IdempotencyWithConfig(config IdempotencyConfig) echo.MiddlewareFunc {
 		}
 	}
 
+	if config.TTL < time.Millisecond {
+		config.TTL = DefaultIdempotencyConfig.TTL
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if config.Skipper(c) {
@@ -126,14 +134,14 @@ func IdempotencyWithConfig(config IdempotencyConfig) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			reqRec := reqRecord{}
+			reqRec := ReqRecord{}
 			reqKey := fmt.Sprintf("req::%s", idempotencyKey)
 			reqData, err := json.Marshal(reqRec)
 			if err != nil {
 				return err
 			}
 
-			setOK, err := config.Rediser.SetNX(c.Request().Context(), reqKey, reqData, 24*time.Hour).Result()
+			setOK, err := config.Rediser.SetNX(c.Request().Context(), reqKey, reqData, config.TTL).Result()
 			if err != nil {
 				return err
 			}
